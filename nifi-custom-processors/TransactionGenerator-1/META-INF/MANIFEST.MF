@@ -1,7 +1,0 @@
-Manifest-Version: 1.0
-Nar-Id: transaction-generator-nar
-Nar-Group: com.cloudera.nifi
-Nar-Version: 0.0.1-SNAPSHOT
-Extension-Name: TransactionGenerator
-Implementation-Title: TransactionGenerator
-Implementation-Version: 0.0.1-SNAPSHOT

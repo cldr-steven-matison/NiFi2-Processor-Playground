@@ -31,6 +31,11 @@ This is the exact template you should start with for any new transform processor
 Takes incoming transaction FlowFiles, runs the heuristic rules (high amount + suspicious geography), and enriches the payload with `cml_response` (fraud_score, risk_level, decision, explanations).  
 Built on top of the `GenericTransform` skeleton using the defensive patterns from the AI guide (list vs. dict handling, try/except, never overwriting original payload, etc.).
 
+### 5. `PandasJSONTransformer.py`
+**Type**: FlowFileTransform
+**Purpose**:  **Native implementation of Pandas**-based geospatial math within NiFi 2.0.
+Accepts JSON transaction FlowFiles containing coordinate data (lat, lon), normalizes them into a DataFrame, and performs vectorized Euclidean distance calculations from a home reference point. Enriches the payload with dist_from_home and pandas_processed status while preserving all original transaction metadata.
+
 ---
 
 ## Future Processors

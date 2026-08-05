@@ -1,7 +1,6 @@
 # TwitchChatListenerProcessor.py
 import json
 import queue
-import re
 import socket
 import threading
 import time
@@ -17,8 +16,8 @@ class TwitchChatListenerProcessor(FlowFileSource):
         implements = ['org.apache.nifi.python.processor.FlowFileSource']
 
     class ProcessorDetails:
-        version = '0.0.19-SNAPSHOT'
-        description = 'Holds a persistent connection to Twitch IRC chat and emits one FlowFile per detected "!load <streamer> [screen]" command (screen optional, defaults to screen1) or "!matrix <screen1|screen2|screen3|screen4>" command (screen required, no default - unlike !load, a bare "!matrix" with no screen is not a recognized command; screen1 targets the Jetson, screen2 targets GamingPC, screen3/screen4 target TunaStarlink). Before dispatching a !load, checks the streamer'"'"'s live status via the Live Check API URL (cso-operator-app, covers both Twitch and Kick "kick:" logins) and replies "not live" instead of queuing if they'"'"'re offline - a lookup failure fails open (dispatches anyway) rather than silently blocking a real load. A global cooldown (Cooldown Seconds property) shared by both commands protects the edge hardware from chat spam - one warning reply per blocked window, then silent. Announces itself once on join (no auto-posted watchlist — reconnects happen often enough that repeating it every time reads as spam); responds to "!commands"/"!help" and "!watchlist" on demand only. Mints a fresh access token from the refresh token before every (re)connect, so it never hits the ~4hr access-token expiry. Reconnects with backoff on disconnect.'
+        version = '0.0.21-SNAPSHOT'
+        description = 'Holds a persistent connection to Twitch IRC chat and emits one FlowFile per detected "!load <streamer> [screen]" command (screen optional, defaults to screen1, "!l" accepted as a short alias) or "!matrix <screen1|screen2|screen3|screen4>" command (screen required, no default - unlike !load, a bare "!matrix" with no screen is not a recognized command; screen1 targets the Jetson, screen2 targets GamingPC, screen3/screen4 target TunaStarlink). Requests the twitch.tv/tags IRCv3 capability to read each message'"'"'s badges/mod tags. Mod-only short forms: "!m" for !matrix, "k:" in place of "kick:" on a streamer login, and "s1"/"s2"/"s3"/"s4" in place of screen1-4 - each is checked independently, and a non-broadcaster/non-moderator sender using any of them has the whole command silently ignored (same as an unrecognized command); the existing full-text forms (including the pre-existing "!l" alias) keep working for everyone, unchanged. Before dispatching a !load, checks the streamer'"'"'s live status via the Live Check API URL (cso-operator-app, covers both Twitch and Kick "kick:" logins) and replies "not live" instead of queuing if they'"'"'re offline - a lookup failure fails open (dispatches anyway) rather than silently blocking a real load. A global cooldown (Cooldown Seconds property) shared by both commands protects the edge hardware from chat spam - one warning reply per blocked window, then silent. Announces itself once on join (no auto-posted watchlist — reconnects happen often enough that repeating it every time reads as spam); responds to "!commands"/"!help" and "!watchlist" ("!w" alias accepted) on demand only. Mints a fresh access token from the refresh token before every (re)connect, so it never hits the ~4hr access-token expiry. Reconnects with backoff on disconnect.'
         tags = ['twitch', 'irc', 'chat', 'streamers', 'chat-bot']
         dependencies = []
 
@@ -134,8 +133,6 @@ class TwitchChatListenerProcessor(FlowFileSource):
         self._cooldown_seconds = cooldown_seconds
         self._last_command_time = 0.0
         self._cooldown_warned = False
-        self._command_re = re.compile(r'^' + re.escape(prefix) + r'\s+(\S+)(?:\s+(\S+))?', re.IGNORECASE)
-        self._matrix_command_re = re.compile(r'^' + re.escape(matrix_command) + r'\s+(\S+)$', re.IGNORECASE)
         # Seeded from the property once; rotates in-memory on every refresh after that.
         self._refresh_token = context.getProperty(self.REFRESH_TOKEN).getValue()
 
@@ -206,10 +203,14 @@ class TwitchChatListenerProcessor(FlowFileSource):
         try:
             self._send(sock, f"PASS oauth:{raw_token}")
             self._send(sock, f"NICK {username.lower()}")
+            # twitch.tv/tags carries each PRIVMSG's badges/mod fields - needed to
+            # gate the mod-only short command forms below. Not awaited/ACK-checked;
+            # by convention it's granted well before JOIN's own response arrives.
+            self._send(sock, "CAP REQ :twitch.tv/tags")
             self._send(sock, f"JOIN #{channel.lower()}")
             self._send_chat(sock, channel,
-                             f"{username} is online! Type {self._command_prefix} <streamer> [screen1|screen2|screen3|screen4] to load a stream, "
-                             f"{self._matrix_command} <screen1|screen2|screen3|screen4> for the matrix screensaver, {self._watchlist_command} for who's on watch, "
+                             f"{username} is online! Type {self._command_prefix} (or !l) <streamer> [screen1|screen2|screen3|screen4] to load a stream, "
+                             f"{self._matrix_command} <screen1|screen2|screen3|screen4> for the matrix screensaver, {self._watchlist_command} (or !w) for who's on watch, "
                              f"or !commands for help.")
 
             buffer = ""
@@ -280,7 +281,53 @@ class TwitchChatListenerProcessor(FlowFileSource):
                 self.logger.error(f"Live-check failed for '{streamer}', dispatching anyway: {e}")
             return True
 
+    # Mod-only short aliases - each checked independently against the sender's
+    # privilege, not tied to which command word (long or "!l") introduced them.
+    _SCREEN_SHORT = {"s1": "screen1", "s2": "screen2", "s3": "screen3", "s4": "screen4"}
+
+    def _is_privileged(self, tags):
+        """True for the channel's broadcaster or a moderator, read off the
+        twitch.tv/tags IRCv3 tags requested at connect. Twitch tags the
+        broadcaster via the 'badges' field, not always via 'mod' - check both."""
+        if tags.get('mod') == '1':
+            return True
+        badges = tags.get('badges', '')
+        return 'broadcaster/' in badges or 'moderator/' in badges
+
+    def _expand_screen_token(self, token):
+        """('s1'-'s4') -> ('screen1'-'screen4', True). Anything else (including
+        an already-canonical screenN or a bogus token) passes through unchanged
+        with was_short=False - unrecognized tokens still fall through to
+        RouteOnAttribute's own 'unmatched', same as before this change."""
+        low = token.lower()
+        if low in self._SCREEN_SHORT:
+            return self._SCREEN_SHORT[low], True
+        return token, False
+
+    def _expand_streamer_token(self, token):
+        """'k:<login>' -> ('kick:<login>', True); anything else unchanged."""
+        if token.lower().startswith("k:"):
+            return "kick:" + token[2:], True
+        return token, False
+
+    def _parse_tags(self, line):
+        """Splits a leading '@key=val;key=val ' IRCv3 tag block off the front of
+        a raw line, if present. Returns (tags_dict, remaining_line)."""
+        if not line.startswith('@'):
+            return {}, line
+        tag_str, sep, rest = line.partition(' ')
+        if not sep:
+            return {}, line
+        tags = {}
+        for kv in tag_str[1:].split(';'):
+            if '=' in kv:
+                k, v = kv.split('=', 1)
+                tags[k] = v
+        return tags, rest
+
     def _handle_line(self, sock, line, channel):
+        tags, line = self._parse_tags(line)
+
         if line.startswith("PING"):
             self._send(sock, line.replace("PING", "PONG", 1))
             return
@@ -295,28 +342,41 @@ class TwitchChatListenerProcessor(FlowFileSource):
         nick = prefix.split("!", 1)[0].lstrip(":")
         _, _, message = rest.partition(":")
         message = message.strip()
+        is_privileged = self._is_privileged(tags)
 
         if message.lower() in ("!commands", "!help"):
             self._send_chat(sock, channel,
-                             f"Commands: {self._command_prefix} <streamer> [screen1|screen2|screen3|screen4] - loads that stream on a screen "
+                             f"Commands: {self._command_prefix} (or !l) <streamer> [screen1|screen2|screen3|screen4] - loads that stream on a screen "
                              f"(defaults to screen1) | {self._matrix_command} <screen1|screen2|screen3|screen4> - turns on the matrix screensaver "
                              f"(screen required, no default) | "
-                             f"{self._watchlist_command} - shows who's currently on the watchlist")
+                             f"{self._watchlist_command} (or !w) - shows who's currently on the watchlist")
             return
 
-        if message.lower() == self._watchlist_command.lower():
+        if message.lower() in (self._watchlist_command.lower(), "!w"):
             self._send_chat(sock, channel, self._format_watchlist_message())
             return
 
-        matrix_match = self._matrix_command_re.match(message)
-        if matrix_match:
+        tokens = message.split()
+        cmd_word = tokens[0].lower() if tokens else ""
+
+        if cmd_word in (self._matrix_command.lower(), "!m"):
             # Array-wide numbering, same as !load: screen1 -> Jetson, screen2 ->
             # GamingPC (WindowsDesktop), screen3/screen4 -> TunaStarlink's local
             # screen2/screen3 (see claude-screen.md). Unlike !load, there is no
-            # default - the screen argument is required, so a bare "!matrix" or
-            # an unrecognized token doesn't match at all and is silently ignored,
-            # same as an unrecognized !load screen falling through unmatched.
-            arg = matrix_match.group(1).lower()
+            # default - the screen argument is required, so a bare "!matrix"/"!m"
+            # or an unrecognized token doesn't match at all and is silently
+            # ignored, same as an unrecognized !load screen falling through
+            # unmatched. "!m" itself, and a short "s1"-"s4" screen argument, are
+            # each independently mod/broadcaster-only - the long "!matrix" form
+            # with a full "screenN" argument stays open to everyone, unchanged.
+            if cmd_word == "!m" and not is_privileged:
+                return
+            if len(tokens) != 2:
+                return
+            arg_expanded, arg_was_short = self._expand_screen_token(tokens[1])
+            if arg_was_short and not is_privileged:
+                return
+            arg = arg_expanded.lower()
             screen = {
                 "screen1": "matrix-screen1",
                 "screen2": "matrix-screen2",
@@ -329,7 +389,7 @@ class TwitchChatListenerProcessor(FlowFileSource):
                 return
             # display_screen is the clean chat-facing label (TwitchChatReplyProcessor's
             # Matrix Message template uses this, not the internal routing sentinel above) -
-            # it's just the recognized arg itself now that screen1 is explicit too.
+            # always the expanded canonical form, whether the sender typed it short or long.
             display_screen = arg
             # No immediate ack here - TwitchChatReplyProcessor posts the one real
             # confirmation after the dispatch actually succeeds (was double-posting
@@ -343,15 +403,26 @@ class TwitchChatListenerProcessor(FlowFileSource):
             })
             return
 
-        match = self._command_re.match(message)
-        if not match:
+        if cmd_word not in (self._command_prefix.lower(), "!l"):
+            return
+        if len(tokens) < 2:
             return
 
         if not self._check_rate_limit(sock, channel):
             return
 
-        streamer = match.group(1).lstrip('@').lower()
-        screen = (match.group(2) or "screen1").lower()
+        streamer_expanded, streamer_was_short = self._expand_streamer_token(tokens[1])
+        if streamer_was_short and not is_privileged:
+            return
+        streamer = streamer_expanded.lstrip('@').lower()
+
+        if len(tokens) > 2:
+            screen_expanded, screen_was_short = self._expand_screen_token(tokens[2])
+            if screen_was_short and not is_privileged:
+                return
+            screen = screen_expanded.lower()
+        else:
+            screen = "screen1"
 
         if not self._is_streamer_live(streamer):
             display_name = streamer[5:] if streamer.startswith("kick:") else streamer

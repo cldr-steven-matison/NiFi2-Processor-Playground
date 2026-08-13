@@ -174,7 +174,7 @@ public class TestGetIceberg {
     }
 
     @Test
-    public void testMissingTableYieldsNoFlowFile() throws Exception {
+    public void testMissingTableRoutesToFailure() throws Exception {
         final String warehouse = warehousePath.toUri().toString();
         seedAirlinesTable(warehouse);
         configureRunner(warehouse);
@@ -183,5 +183,9 @@ public class TestGetIceberg {
         runner.run(1);
 
         runner.assertTransferCount(GetIceberg.REL_SUCCESS, 0);
+        runner.assertTransferCount(GetIceberg.REL_FAILURE, 1);
+        final MockFlowFile failed = runner.getFlowFilesForRelationship(GetIceberg.REL_FAILURE).get(0);
+        failed.assertAttributeExists("iceberg.read.error");
+        failed.assertAttributeEquals(GetIceberg.ICEBERG_TABLE_NAME, "does_not_exist");
     }
 }

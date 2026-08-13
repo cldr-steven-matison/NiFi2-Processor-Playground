@@ -74,7 +74,7 @@ needs them on its classpath).
 
 ```bash
 mvn clean install -Denforcer.skip=true     # includes the HadoopCatalog TestRunner IT (3 rows)
-kubectl cp -c nifi nifi-geticeberg-nar/target/nifi-geticeberg-nar-1.0.1-SNAPSHOT.nar \
+kubectl cp -c nifi nifi-geticeberg-nar/target/nifi-geticeberg-nar-1.0.2-SNAPSHOT.nar \
   cfm-streaming/mynifi-0:/opt/nifi/nifi-current/data/extensions/
 ```
 
@@ -95,12 +95,12 @@ The tabulario fixture does **not** vend `io-impl`/S3 config through `/v1/config`
 sets them as GetIceberg dynamic properties. Against a real CDP datashare REST catalog the vended
 config + credentials make those unnecessary — that's the point of the vended-credentials header.
 
-Validated result (CFM `2.6.0.4.3.4.0-234`, 2026-08-12): one FlowFile, `record.count=3`, JSON
-array of the 3 airlines, provenance `RECEIVE s3://warehouse/demo/airlines`.
+Validated against CFM `2.6.0.4.3.4.0-234`: one FlowFile, `record.count=3`, JSON array of the
+3 airlines, provenance `RECEIVE s3://warehouse/demo/airlines`.
 
-## Pointing it at a CDP Data Share (the #154 target)
+## Pointing it at a CDP Data Share
 
-Same PG shape plus the Knox OAuth chain from the #152 recipe: `StandardOauth2AccessTokenProvider`
+Same PG shape plus the Knox OAuth chain: `StandardOauth2AccessTokenProvider`
 (client-credentials against the Knox token endpoint) wired into `RESTCatalogService`'s
 `OAuth2 Access Token Provider`, `Catalog URI` = the datashare `iceberg-rest` endpoint,
 namespace/table = `poc_uc2`/`airlines`. No dynamic S3 properties needed — credentials are vended.

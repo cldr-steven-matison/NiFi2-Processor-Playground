@@ -132,8 +132,14 @@ public class GetIceberg extends AbstractProcessor {
             .description("A FlowFile containing the rows read from the Iceberg table is routed to this relationship.")
             .build();
 
+    static final Relationship REL_FAILURE = new Relationship.Builder()
+            .name("failure")
+            .description("If the Iceberg table cannot be read (catalog load, table load, scan, or record write failure), "
+                    + "a FlowFile carrying the namespace, table name, and error message is routed to this relationship.")
+            .build();
+
     private static final List<PropertyDescriptor> PROPERTIES = List.of(CATALOG, CATALOG_NAMESPACE, TABLE_NAME, RECORD_WRITER, COLUMNS);
-    private static final Set<Relationship> RELATIONSHIPS = Set.of(REL_SUCCESS);
+    private static final Set<Relationship> RELATIONSHIPS = Set.of(REL_SUCCESS, REL_FAILURE);
 
     @Override
     protected List<PropertyDescriptor> getSupportedPropertyDescriptors() {
@@ -164,6 +170,7 @@ public class GetIceberg extends AbstractProcessor {
         final RecordSetWriterFactory writerFactory = context.getProperty(RECORD_WRITER).asControllerService(RecordSetWriterFactory.class);
 
         Catalog catalog = null;
+        FlowFile flowFile = null;
         try {
             catalog = loadCatalog(context);
             final TableIdentifier tableIdentifier = TableIdentifier.of(Namespace.of(catalogNamespace.split("\\.")), tableName);
@@ -180,7 +187,7 @@ public class GetIceberg extends AbstractProcessor {
                 scanBuilder = scanBuilder.select(columns);
             }
 
-            FlowFile flowFile = session.create();
+            flowFile = session.create();
             final AtomicReference<WriteResult> writeResult = new AtomicReference<>();
             final AtomicReference<String> mimeType = new AtomicReference<>();
             final AtomicLong recordCount = new AtomicLong();
@@ -215,8 +222,13 @@ public class GetIceberg extends AbstractProcessor {
             session.transfer(flowFile, REL_SUCCESS);
         } catch (final Exception e) {
             getLogger().error("Exception occurred while reading Iceberg table {}.{}", catalogNamespace, tableName, e);
-            session.rollback();
-            context.yield();
+            FlowFile failureFlowFile = flowFile != null ? flowFile : session.create();
+            final Map<String, String> failureAttributes = new HashMap<>();
+            failureAttributes.put(ICEBERG_CATALOG_NAMESPACE, catalogNamespace);
+            failureAttributes.put(ICEBERG_TABLE_NAME, tableName);
+            failureAttributes.put("iceberg.read.error", e.getMessage() != null ? e.getMessage() : e.toString());
+            failureFlowFile = session.putAllAttributes(failureFlowFile, failureAttributes);
+            session.transfer(failureFlowFile, REL_FAILURE);
         } finally {
             closeCatalog(catalog);
         }

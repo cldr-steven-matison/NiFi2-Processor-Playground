@@ -21,7 +21,10 @@ Record Writer).
   (`io-impl`, `s3.endpoint`, `s3.path-style-access`, `client.region`, …) when the REST server
   doesn't vend them. Emits one FlowFile per trigger with `record.count`,
   `iceberg.catalog.namespace`, `iceberg.table.name` attributes and a provenance RECEIVE event
-  on the table location.
+  on the table location. Two relationships — `success` for the rows and `failure` for a
+  diagnostic FlowFile (namespace, table, and error message as attributes). That `success` +
+  `failure` pair deliberately mirrors the stock `PutIceberg` write processor, so a read side and
+  a write side present the same relationship surface on the canvas.
 - **`IcebergCatalogFactory`** — REST and HADOOP catalogs. Two deliberate divergences from the
   stock factory: the OAuth token is **null-guarded** (a disabled/failed provider fails with a
   clear message instead of an NPE inside Iceberg's `EnvironmentUtil`), and
@@ -100,7 +103,14 @@ Validated against CFM `2.6.0.4.3.4.0-234`: one FlowFile, `record.count=3`, JSON 
 
 ## Pointing it at a CDP Data Share
 
-Same PG shape plus the Knox OAuth chain: `StandardOauth2AccessTokenProvider`
+Same PG shape plus the Knox OAuth chain: a `StandardOauth2AccessTokenProvider`
 (client-credentials against the Knox token endpoint) wired into `RESTCatalogService`'s
 `OAuth2 Access Token Provider`, `Catalog URI` = the datashare `iceberg-rest` endpoint,
-namespace/table = `poc_uc2`/`airlines`. No dynamic S3 properties needed — credentials are vended.
+namespace/table = `poc_uc2`/`airlines`. No dynamic S3 properties needed — the datashare vends the
+S3 read credentials in the `loadTable` response, unlocked by the
+`X-Iceberg-Access-Delegation: vended-credentials` header the factory always sends.
+
+Against a live CDP Data Share this reads end to end: `GetIceberg` on `poc_uc2.airlines` returns a
+single FlowFile whose content is a JSON array of the three airline rows — the same three rows a
+Spark or SSB client sees through that catalog, now through a native NiFi processor with no
+`InvokeHTTP` glue.

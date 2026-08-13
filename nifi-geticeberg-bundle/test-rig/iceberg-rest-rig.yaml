@@ -1,0 +1,112 @@
+# Local Iceberg REST catalog + MinIO rig for exercising GetIceberg against a real REST
+# catalog without CDP credentials. Mirrors the shape of the CDP datashare target: REST
+# catalog URI + S3-compatible object store, config vended to clients via /v1/config.
+#
+#   kubectl apply -f iceberg-rest-rig.yaml
+#   kubectl apply -f seed-airlines-job.yaml   # seeds demo.airlines with 3 rows
+#
+# In-cluster catalog URI: http://iceberg-rest.iceberg-demo.svc.cluster.local:8181
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: iceberg-demo
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: minio
+  namespace: iceberg-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+    spec:
+      containers:
+        - name: minio
+          image: minio/minio:latest
+          args: ["server", "/data", "--console-address", ":9001"]
+          env:
+            - name: MINIO_ROOT_USER
+              value: admin
+            - name: MINIO_ROOT_PASSWORD
+              value: password
+          ports:
+            - containerPort: 9000
+            - containerPort: 9001
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: minio
+  namespace: iceberg-demo
+spec:
+  selector:
+    app: minio
+  ports:
+    - name: s3
+      port: 9000
+      targetPort: 9000
+    - name: console
+      port: 9001
+      targetPort: 9001
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iceberg-rest
+  namespace: iceberg-demo
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: iceberg-rest
+  template:
+    metadata:
+      labels:
+        app: iceberg-rest
+    spec:
+      containers:
+        - name: iceberg-rest
+          image: tabulario/iceberg-rest:1.6.0
+          env:
+            - name: CATALOG_WAREHOUSE
+              value: s3://warehouse/
+            - name: CATALOG_IO__IMPL
+              value: org.apache.iceberg.aws.s3.S3FileIO
+            - name: CATALOG_S3_ENDPOINT
+              value: http://minio.iceberg-demo.svc.cluster.local:9000
+            - name: CATALOG_S3_PATH__STYLE__ACCESS
+              value: "true"
+            - name: CATALOG_S3_ACCESS__KEY__ID
+              value: admin
+            - name: CATALOG_S3_SECRET__ACCESS__KEY
+              value: password
+            - name: CATALOG_CLIENT_REGION
+              value: us-east-1
+            - name: AWS_ACCESS_KEY_ID
+              value: admin
+            - name: AWS_SECRET_ACCESS_KEY
+              value: password
+            - name: AWS_REGION
+              value: us-east-1
+          ports:
+            - containerPort: 8181
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: iceberg-rest
+  namespace: iceberg-demo
+spec:
+  selector:
+    app: iceberg-rest
+  ports:
+    - name: rest
+      port: 8181
+      targetPort: 8181

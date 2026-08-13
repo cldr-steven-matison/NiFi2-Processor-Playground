@@ -1,0 +1,78 @@
+# Seeds demo.airlines (3 rows: AA/DL/UA) into the iceberg-rest-rig catalog via pyiceberg,
+# mirroring the poc_uc2.airlines table GetIceberg targets on the CDP datashare.
+# Init container creates the MinIO warehouse bucket first.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seed-airlines-script
+  namespace: iceberg-demo
+data:
+  seed.py: |
+    import pyarrow as pa
+    from pyiceberg.catalog import load_catalog
+
+    catalog = load_catalog(
+        "demo",
+        **{
+            "type": "rest",
+            "uri": "http://iceberg-rest.iceberg-demo.svc.cluster.local:8181",
+            "s3.endpoint": "http://minio.iceberg-demo.svc.cluster.local:9000",
+            "s3.access-key-id": "admin",
+            "s3.secret-access-key": "password",
+            "s3.path-style-access": "true",
+            "client.region": "us-east-1",
+        },
+    )
+
+    schema = pa.schema([
+        ("carrier_code", pa.string(), False),
+        ("airline_name", pa.string(), False),
+        ("country", pa.string(), False),
+    ])
+
+    catalog.create_namespace_if_not_exists("demo")
+    table = catalog.create_table_if_not_exists("demo.airlines", schema=schema)
+
+    if table.scan().to_arrow().num_rows == 0:
+        rows = pa.Table.from_pylist(
+            [
+                {"carrier_code": "AA", "airline_name": "American Airlines", "country": "USA"},
+                {"carrier_code": "DL", "airline_name": "Delta Air Lines", "country": "USA"},
+                {"carrier_code": "UA", "airline_name": "United Airlines", "country": "USA"},
+            ],
+            schema=schema,
+        )
+        table.append(rows)
+
+    print("demo.airlines rows:", table.scan().to_arrow().num_rows)
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seed-airlines
+  namespace: iceberg-demo
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: make-bucket
+          image: minio/mc:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - mc alias set local http://minio.iceberg-demo.svc.cluster.local:9000 admin password && mc mb -p local/warehouse
+      containers:
+        - name: seed
+          image: python:3.12-slim
+          command: ["/bin/sh", "-c"]
+          args:
+            - pip install --quiet "pyiceberg[pyarrow]==0.9.1" && python /scripts/seed.py
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: seed-airlines-script

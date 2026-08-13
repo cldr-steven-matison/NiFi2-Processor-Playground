@@ -18,17 +18,17 @@
 
     <parent>
         <groupId>com.example</groupId>
-        <artifactId>nifi-geticeberg-bundle</artifactId>
+        <artifactId>nifi-iceberg-read-bundle</artifactId>
         <version>1.0.3-SNAPSHOT</version>
     </parent>
 
-    <artifactId>nifi-geticeberg-nar</artifactId>
+    <artifactId>nifi-iceberg-read-nar</artifactId>
     <packaging>nar</packaging>
 
     <dependencies>
         <dependency>
             <groupId>com.example</groupId>
-            <artifactId>nifi-geticeberg-processors</artifactId>
+            <artifactId>nifi-iceberg-read-processors</artifactId>
             <version>1.0.3-SNAPSHOT</version>
         </dependency>
         <!-- Parent NAR: the CFM services-api NAR deployed on the target NiFi, so the live

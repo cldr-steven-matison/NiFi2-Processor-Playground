@@ -23,8 +23,8 @@ End location for operational custom nifi processors.
 - **`my-custom-nifi-bundle/`**  
   The Maven scaffold for a native **Java NAR** processor — generated straight from Apache's processor archetype. Start here when you need JVM speed, a controller service, or a first-class shipped processor type.
 
-- **`nifi-geticeberg-bundle/`**  
-  A worked native Java processor: **`GetIceberg`**, the read counterpart to the stock write-only `PutIceberg`. It plugs into the live `RESTCatalogService`, scans an Iceberg table, and emits the rows through a Record Writer — proven reading a CDP Data Share table end to end. See [`nifi-geticeberg-bundle/README.md`](./nifi-geticeberg-bundle/README.md).
+- **`nifi-iceberg-read-bundle/`**  
+  Two worked native Java processors — the read side the stock write-only `PutIceberg` bundle lacks. **`GetIceberg`** scans a whole table and emits the rows through a Record Writer; **`QueryIceberg`** runs SQL `SELECT`s through Apache Calcite with predicate/projection pushdown into the Iceberg scan. Both plug into the live `RESTCatalogService` and are proven reading a CDP Data Share table end to end. See [`nifi-iceberg-read-bundle/README.md`](./nifi-iceberg-read-bundle/README.md).
 
 - **Main supporting repo**  
   [ClouderaStreamingOperators](https://github.com/cldr-steven-matison/ClouderaStreamingOperators) — full Kubernetes manifests, NiFi CRDs, and deployment patterns.
@@ -52,7 +52,7 @@ The Python path is the two blog posts above. The Java path is short once you've 
 4. **Build the NAR** with `mvn clean install`.
 5. **Deploy** by copying the NAR into NiFi's extensions autoload directory; iterate by bumping the bundle version and repointing the processor.
 
-`nifi-geticeberg-bundle/` is the end-to-end worked example: it does all five, plugs a real `RESTCatalogService` controller service, and returns real rows from a live catalog. Its README covers the parts that only bite in the field — the parent-NAR classloader trick, extracting the CFM dependency jars, and the version-bump-to-redeploy rule.
+`nifi-iceberg-read-bundle/` is the end-to-end worked example: it does all five, plugs a real `RESTCatalogService` controller service, and returns real rows from a live catalog. Its README covers the parts that only bite in the field — the parent-NAR classloader trick, extracting the CFM dependency jars, and the version-bump-to-redeploy rule.
 
 ---
 
@@ -63,8 +63,8 @@ The Python path is the two blog posts above. The Java path is short once you've 
 3. Drop any `.py` file from `nifi-custom-processors/` into your mounted extensions folder.
 4. Wait 30–60 seconds → refresh the NiFi UI → drag the processor onto the canvas.
 
-Hot-reload works automatically. Just edit, save, wait, refresh. For the Java NAR path, follow the five steps above and `nifi-geticeberg-bundle/README.md`.
+Hot-reload works automatically. Just edit, save, wait, refresh. For the Java NAR path, follow the five steps above and `nifi-iceberg-read-bundle/README.md`.
 
 ## Contributing / Adding New Processors
 
-Add Python processors to `nifi-custom-processors/`; add Java processors as their own `nifi-*-bundle/` NAR bundle alongside `nifi-geticeberg-bundle/`. PRs welcome.
+Add Python processors to `nifi-custom-processors/`; add Java processors as their own `nifi-*-bundle/` NAR bundle alongside `nifi-iceberg-read-bundle/`. PRs welcome.

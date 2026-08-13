@@ -19,7 +19,7 @@
     <parent>
         <groupId>com.example</groupId>
         <artifactId>nifi-geticeberg-bundle</artifactId>
-        <version>1.0.2-SNAPSHOT</version>
+        <version>1.0.3-SNAPSHOT</version>
     </parent>
 
     <artifactId>nifi-geticeberg-processors</artifactId>
@@ -194,6 +194,15 @@
                     <artifactId>netty-all</artifactId>
                 </exclusion>
             </exclusions>
+        </dependency>
+
+        <!-- SQL engine for QueryIceberg. calcite-core directly (not nifi-calcite-utils): the
+             pushdown seam is our own ProjectableFilterableTable, which nifi-calcite-utils'
+             plain enumerable NiFiTable cannot express. 1.40.0 matches NiFi 2.6.0's Calcite. -->
+        <dependency>
+            <groupId>org.apache.calcite</groupId>
+            <artifactId>calcite-core</artifactId>
+            <version>1.40.0</version>
         </dependency>
 
         <!-- Test -->

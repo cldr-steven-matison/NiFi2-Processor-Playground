@@ -1,0 +1,126 @@
+# Seeds demo.flights into the iceberg-rest-rig catalog via pyiceberg: ~120k synthetic rows,
+# partitioned by the string column flight_month ('2026-01'..'2026-12'), written as 12 separate
+# monthly appends so each month lands in its own Parquet data file. That layout is what makes
+# QueryIceberg's pushdown provable live: WHERE flight_month = '2026-03' plans 1 data file and
+# skips 11, reported in the iceberg.scan.skipped.data.files FlowFile attribute.
+#
+# flight_month is a string on purpose — date/timestamp predicates are outside QueryIceberg's
+# v1 pushdown scope, so the partition-pruning demo predicate must be a pushable type.
+#
+# Deterministic (seeded RNG): re-running against a fresh rig reproduces identical data.
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: seed-flights-script
+  namespace: iceberg-demo
+data:
+  seed.py: |
+    import random
+
+    import pyarrow as pa
+    from pyiceberg.catalog import load_catalog
+    from pyiceberg.partitioning import PartitionField, PartitionSpec
+    from pyiceberg.schema import Schema
+    from pyiceberg.transforms import IdentityTransform
+    from pyiceberg.types import IntegerType, LongType, NestedField, StringType
+
+    catalog = load_catalog(
+        "demo",
+        **{
+            "type": "rest",
+            "uri": "http://iceberg-rest.iceberg-demo.svc.cluster.local:8181",
+            "s3.endpoint": "http://minio.iceberg-demo.svc.cluster.local:9000",
+            "s3.access-key-id": "admin",
+            "s3.secret-access-key": "password",
+            "s3.path-style-access": "true",
+            "client.region": "us-east-1",
+        },
+    )
+
+    schema = Schema(
+        NestedField(1, "flight_id", LongType(), required=False),
+        NestedField(2, "carrier_code", StringType(), required=False),
+        NestedField(3, "flight_num", IntegerType(), required=False),
+        NestedField(4, "origin", StringType(), required=False),
+        NestedField(5, "dest", StringType(), required=False),
+        NestedField(6, "flight_month", StringType(), required=False),
+        NestedField(7, "dep_delay", IntegerType(), required=False),
+        NestedField(8, "distance", IntegerType(), required=False),
+    )
+    spec = PartitionSpec(PartitionField(source_id=6, field_id=1000, transform=IdentityTransform(), name="flight_month"))
+
+    catalog.create_namespace_if_not_exists("demo")
+    table = catalog.create_table_if_not_exists("demo.flights", schema=schema, partition_spec=spec)
+
+    if table.current_snapshot() is not None:
+        print("demo.flights already seeded; nothing to do")
+    else:
+        arrow_schema = pa.schema([
+            ("flight_id", pa.int64()),
+            ("carrier_code", pa.string()),
+            ("flight_num", pa.int32()),
+            ("origin", pa.string()),
+            ("dest", pa.string()),
+            ("flight_month", pa.string()),
+            ("dep_delay", pa.int32()),
+            ("distance", pa.int32()),
+        ])
+        carriers = ["AA", "DL", "UA", "BA", "WN", "B6", "AF", "LH"]
+        airports = ["ATL", "DFW", "DEN", "ORD", "LAX", "JFK", "MCO", "LAS",
+                    "CLT", "MIA", "SEA", "SFO", "PHX", "EWR", "IAH", "BOS"]
+        rows_per_month = 10000
+        rng = random.Random(156)
+        flight_id = 0
+
+        for month in range(1, 13):
+            flight_month = f"2026-{month:02d}"
+            cols = {name: [] for name in arrow_schema.names}
+            for _ in range(rows_per_month):
+                flight_id += 1
+                origin = rng.choice(airports)
+                dest = rng.choice([a for a in airports if a != origin])
+                cols["flight_id"].append(flight_id)
+                cols["carrier_code"].append(rng.choice(carriers))
+                cols["flight_num"].append(rng.randint(100, 9999))
+                cols["origin"].append(origin)
+                cols["dest"].append(dest)
+                cols["flight_month"].append(flight_month)
+                cols["dep_delay"].append(max(-15, int(rng.gauss(12, 35))))
+                cols["distance"].append(rng.randint(200, 5000))
+            table.append(pa.Table.from_pydict(cols, schema=arrow_schema))
+            print(f"appended {rows_per_month} rows for {flight_month}")
+
+        data_files = sum(1 for _ in table.scan().plan_files())
+        total_rows = table.scan().to_arrow().num_rows
+        print(f"demo.flights seeded: {total_rows} rows in {data_files} data files")
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: seed-flights
+  namespace: iceberg-demo
+spec:
+  backoffLimit: 2
+  template:
+    spec:
+      restartPolicy: Never
+      initContainers:
+        - name: make-bucket
+          image: minio/mc:latest
+          command: ["/bin/sh", "-c"]
+          args:
+            - mc alias set local http://minio.iceberg-demo.svc.cluster.local:9000 admin password && mc mb -p local/warehouse
+      containers:
+        - name: seed
+          image: python:3.12-slim
+          command: ["/bin/sh", "-c"]
+          args:
+            - pip install --quiet "pyiceberg[pyarrow]==0.9.1" && python /scripts/seed.py
+          volumeMounts:
+            - name: script
+              mountPath: /scripts
+      volumes:
+        - name: script
+          configMap:
+            name: seed-flights-script

@@ -1,1 +1,2 @@
 org.apache.nifi.processors.iceberg.GetIceberg
+org.apache.nifi.processors.iceberg.QueryIceberg

@@ -1,0 +1,3 @@
+# Build output stays untracked: the assembled NAR bundles Tahu + Paho + protobuf and is large.
+# Build locally with: mvn clean install -Denforcer.skip=true (see README).
+target/

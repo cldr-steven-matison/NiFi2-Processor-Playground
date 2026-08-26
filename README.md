@@ -26,6 +26,9 @@ End location for operational custom nifi processors.
 - **`nifi-iceberg-read-bundle/`**  
   Two worked native Java processors — the read side the stock write-only `PutIceberg` bundle lacks. **`GetIceberg`** scans a whole table and emits the rows through a Record Writer; **`QueryIceberg`** runs SQL `SELECT`s through Apache Calcite with predicate/projection pushdown into the Iceberg scan. Both plug into the live `RESTCatalogService` and are proven reading a CDP Data Share table end to end. See [`nifi-iceberg-read-bundle/README.md`](./nifi-iceberg-read-bundle/README.md).
 
+- **`nifi-sparkplug-bundle/`**  
+  A native Java **`PublishSparkplug`** processor — the Sparkplug B **publish** side that the CDF IIoT NAR (consume-only `ConsumeMQTTIIoT`) and the stock `PublishMQTT` (raw bytes) both lack. Encodes a FlowFile's JSON metrics as Sparkplug B (Eclipse Tahu) and publishes over MQTT (Eclipse Paho), managing the NBIRTH/NDATA/NDEATH and `bdSeq`/`seq` state machine. Self-contained NAR built to side-load onto a MiNiFi Java edge agent. See [`nifi-sparkplug-bundle/README.md`](./nifi-sparkplug-bundle/README.md).
+
 - **Main supporting repo**  
   [ClouderaStreamingOperators](https://github.com/cldr-steven-matison/ClouderaStreamingOperators) — full Kubernetes manifests, NiFi CRDs, and deployment patterns.
 

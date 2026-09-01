@@ -1,0 +1,2 @@
+# Maven build output — every bundle, incl. orphaned pre-rename build trees
+target/

@@ -40,5 +40,23 @@
             <version>${cfm.iceberg.services.api.version}</version>
             <type>nar</type>
         </dependency>
+        <!-- Also add the JAR so the NarMojo doc generator can introspect classes -->
+        <dependency>
+            <groupId>org.apache.nifi</groupId>
+            <artifactId>nifi-iceberg-services-api</artifactId>
+            <version>${cfm.iceberg.services.api.version}</version>
+        </dependency>
     </dependencies>
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.nifi</groupId>
+        <artifactId>nifi-nar-maven-plugin</artifactId>
+        <configuration>
+          <enforceDocGeneration>false</enforceDocGeneration>
+          <nariDocGeneration>false</nariDocGeneration>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
 </project>

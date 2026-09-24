@@ -1,6 +1,6 @@
 # NiFi Custom Python Processors
 
-Local playground for custom NiFi 2.x Python processors (`nifiapi`). Not built/packaged automatically — drop a `.py` file into a mounted `python/extensions` directory (PVC or `minikube mount`, see `DesktopShare/completed/nifi-minikube-custom-processor.md`) and NiFi hot-loads it.
+Local playground for custom NiFi 2.x Python processors (`nifiapi`). Not built/packaged automatically — drop a `.py` file into a mounted `python/extensions` directory (PVC or `minikube mount`, see `BrainShare/completed/nifi-minikube-custom-processor.md`) and NiFi hot-loads it.
 
 ## Processors
 
